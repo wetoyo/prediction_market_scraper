@@ -49,8 +49,22 @@ def fetch_markets(
     return markets
 
 
+def fetch_orderbook(ticker: str, depth: int | None = None) -> dict:
+    """Fetches the current order book (yes/no price levels) for a single market."""
+    params = {}
+    if depth:
+        params["depth"] = depth
+    response = requests.get(f"{BASE_URL}/markets/{ticker}/orderbook", params=params, timeout=20)
+    response.raise_for_status()
+    return response.json().get("orderbook_fp", {})
+
+
 if __name__ == "__main__":
     fed_markets = fetch_markets(series_ticker="KXFED")
     print(f"Fetched {len(fed_markets)} KXFED markets")
     for market in fed_markets[:5]:
         print(market["ticker"], "|", market["title"])
+
+    if fed_markets:
+        orderbook = fetch_orderbook(fed_markets[0]["ticker"])
+        print(f"Orderbook for {fed_markets[0]['ticker']}: {orderbook}")

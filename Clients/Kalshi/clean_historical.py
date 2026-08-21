@@ -16,6 +16,18 @@ CREATE TABLE IF NOT EXISTS markets (
     raw_json TEXT NOT NULL,
     fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS orderbook_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    yes_dollars TEXT NOT NULL,
+    no_dollars TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_ticker_time
+    ON orderbook_snapshots(ticker, fetched_at);
 """
 
 
@@ -76,9 +88,45 @@ def save_markets(markets: list[dict], conn: sqlite3.Connection | None = None) ->
     return len(cleaned)
 
 
+def clean_orderbook_snapshot(ticker: str, orderbook: dict) -> dict:
+    return {
+        "ticker": ticker,
+        "yes_dollars": json.dumps(orderbook.get("yes_dollars", [])),
+        "no_dollars": json.dumps(orderbook.get("no_dollars", [])),
+        "raw_json": json.dumps(orderbook),
+    }
+
+
+def save_orderbook_snapshots(
+    snapshots: list[tuple[str, dict]], conn: sqlite3.Connection | None = None
+) -> int:
+    """Appends one row per (ticker, orderbook) snapshot. Unlike markets, snapshots are
+    never upserted -- each fetch is a new point in the order book's time series.
+    """
+    owns_connection = conn is None
+    conn = conn or get_connection()
+
+    cleaned = [clean_orderbook_snapshot(ticker, orderbook) for ticker, orderbook in snapshots]
+    conn.executemany(
+        """
+        INSERT INTO orderbook_snapshots (ticker, yes_dollars, no_dollars, raw_json)
+        VALUES (:ticker, :yes_dollars, :no_dollars, :raw_json)
+        """,
+        cleaned,
+    )
+    conn.commit()
+    if owns_connection:
+        conn.close()
+    return len(cleaned)
+
+
 if __name__ == "__main__":
-    from fetch_historical import fetch_markets
+    from fetch_historical import fetch_markets, fetch_orderbook
 
     fed_markets = fetch_markets(series_ticker="KXFED")
     written = save_markets(fed_markets)
     print(f"Wrote {written} markets to {DEFAULT_DB_PATH}")
+
+    snapshots = [(m["ticker"], fetch_orderbook(m["ticker"])) for m in fed_markets[:5]]
+    written = save_orderbook_snapshots(snapshots)
+    print(f"Wrote {written} orderbook snapshots to {DEFAULT_DB_PATH}")
