@@ -17,6 +17,19 @@ Fetches markets, following the response's `cursor` field until it's empty
 or `max_pages` requests have been made. `status="open"` by default; pass
 `None` to fetch all statuses.
 
+### `fetch_orderbook(ticker, depth=None) -> dict`
+
+Current order book (yes/no price levels) for a single market. No
+historical equivalent exists — this is always the live book.
+
+### `fetch_trades(ticker, min_ts=None, max_ts=None, limit=1000, max_pages=20) -> list[dict]`
+
+Historical executed trades for a single market — unlike the order book,
+this genuinely is history. Each trade dict has `yes_price_dollars` /
+`no_price_dollars`, `taker_side`, `count_fp`, `created_time` (ISO-8601 UTC,
+variable-precision fractional seconds), `trade_id`. `min_ts`/`max_ts` are
+unix seconds, both optional; paginates the same way as `fetch_markets`.
+
 ## `clean_historical.py`
 
 Normalization and SQLite persistence.
@@ -102,9 +115,13 @@ Lists orders. `status` filters to `"resting"`, `"canceled"`, or
 
 #### `place_order(ticker, side, count, price, time_in_force="good_till_canceled", client_order_id=None) -> dict`
 
-Submits a limit order via `POST /portfolio/events/orders` — the current,
-non-deprecated order-creation endpoint (the legacy `POST
-/portfolio/orders` is being phased out). `side` is `"bid"` or `"ask"`;
+Submits a limit order via `POST /portfolio/events/orders` — the current
+V2 order-creation endpoint. Note this endpoint is only served from the
+`https://external-api.kalshi.com/trade-api/v2` "Production Trade API" host,
+**not** `api.elections.kalshi.com` (which serves the read-only portfolio
+endpoints but 404s on order placement/cancellation); `live_execution.py`'s
+`BASE_URL` points at the trade host for that reason. `side` is `"bid"` or
+`"ask"`;
 `count`/`price` are fixed-point dollar strings (e.g. `count="10.00"`,
 `price="0.5600"`). Generates a random `client_order_id` (UUID4) if none is
 given.

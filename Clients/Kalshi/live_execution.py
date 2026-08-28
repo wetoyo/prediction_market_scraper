@@ -15,7 +15,13 @@ import requests
 
 from live_datastream import _load_private_key, _sign_request
 
-BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
+# The V2 event-market order endpoints (`/portfolio/events/orders`, POST/DELETE)
+# are only served from the "Production Trade API" host below. The older
+# "Shared API" host (api.elections.kalshi.com) still answers the read-only
+# portfolio endpoints but 404s on order placement/cancellation, so use the
+# trade host for everything. Signing is over the path only, so API_PATH_PREFIX
+# is unchanged and host-independent.
+BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
 API_PATH_PREFIX = "/trade-api/v2"
 
 
