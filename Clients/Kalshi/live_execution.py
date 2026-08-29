@@ -53,7 +53,17 @@ class KalshiTradingClient:
         response = requests.request(
             method, f"{BASE_URL}{path}", headers=headers, params=params, json=json_body, timeout=20
         )
-        response.raise_for_status()
+        if not response.ok:
+            # raise_for_status() drops the response body; Kalshi puts the actual
+            # reason there (`{"error":{"code":"insufficient_balance",...}}` etc.)
+            # and a bare "400 Bad Request" with no detail has cost real
+            # debugging time. Keep it an HTTPError with `.response` set so
+            # existing `except HTTPError` / `.response.status_code` callers are
+            # unaffected.
+            raise requests.exceptions.HTTPError(
+                f"{response.status_code} {response.reason} for {method} {path}: {response.text[:600]}",
+                response=response,
+            )
         return response.json()
 
     def get_balance(self) -> dict:
@@ -86,9 +96,22 @@ class KalshiTradingClient:
         price: str,
         time_in_force: str = "good_till_canceled",
         client_order_id: str | None = None,
+        exchange_index: int | None = None,
+        reduce_only: bool | None = None,
     ) -> dict:
         """Submits a limit order. side is 'bid' or 'ask'; count/price are fixed-point
         dollar strings (e.g. count="10.00", price="0.5600").
+
+        exchange_index (Kalshi Exchange Sharding, docs.kalshi.com/getting_started/
+        exchange_sharding): which exchange shard to route the order to. Markets
+        carry an `exchange_index` on GET /markets; collateral is per-shard and an
+        order routed to a shard the account holds no balance on is rejected
+        `404 {"error":{"code":"user_not_found"}}`. None omits the field, which
+        makes Kalshi auto-route by ticker (billed to the unscoped write bucket
+        plus every nonzero shard's); passing the market's own index targets that
+        shard's write bucket directly. reduce_only, when True, forbids the order
+        from opening or increasing a position (only closing one) -- for
+        best-effort exit sells that must never oversell into an opposite position.
         """
         body = {
             "ticker": ticker,
@@ -99,6 +122,10 @@ class KalshiTradingClient:
             "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": client_order_id or str(uuid.uuid4()),
         }
+        if exchange_index is not None:
+            body["exchange_index"] = exchange_index
+        if reduce_only is not None:
+            body["reduce_only"] = reduce_only
         return self._request("POST", "/portfolio/events/orders", json_body=body)
 
     def cancel_order(self, order_id: str) -> dict:
