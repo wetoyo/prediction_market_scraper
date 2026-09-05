@@ -162,8 +162,11 @@ class KalshiStateManager:
         self._raw_client = None if dry_run else KalshiTradingClient()
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             conn.executescript(_SCHEMA)
+        finally:
+            conn.close()
 
     def _connect(self) -> sqlite3.Connection:
         # isolation_level=None (autocommit) hands transaction boundaries
@@ -239,8 +242,16 @@ class KalshiStateManager:
         return payload
 
     def _read_balance_cache(self) -> dict | None:
-        with self._connect() as conn:
+        # try/finally, not `with self._connect() as conn:` -- sqlite3's
+        # Connection context manager only commits/rolls back the transaction
+        # on exit, it does NOT close the connection (a real leak here before
+        # this was caught: this process runs for hours/days, and every one of
+        # these calls was leaking a connection).
+        conn = self._connect()
+        try:
             row = conn.execute("SELECT payload_json, fetched_at FROM balance_cache WHERE id = 1").fetchone()
+        finally:
+            conn.close()
         if row is None:
             return None
         payload_json, fetched_at = row
@@ -249,13 +260,16 @@ class KalshiStateManager:
         return json.loads(payload_json)
 
     def _write_balance_cache(self, payload: dict) -> None:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             conn.execute(
                 "INSERT INTO balance_cache (id, payload_json, fetched_at) VALUES (1, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json, "
                 "fetched_at = excluded.fetched_at",
                 (json.dumps(payload), time.time()),
             )
+        finally:
+            conn.close()
 
     def apply_capital_allocation(self, total_balance_dollars: float) -> float:
         """Scales a real total-account balance down to what THIS experiment
@@ -291,7 +305,8 @@ class KalshiStateManager:
         real trade.
         """
         try:
-            with self._connect() as conn:
+            conn = self._connect()
+            try:
                 conn.execute(
                     "INSERT INTO order_log "
                     "(experiment, ticker, favored_side, api_side, count, price, dry_run, response_json, created_at) "
@@ -301,5 +316,7 @@ class KalshiStateManager:
                         int(dry_run), json.dumps(response, default=str), time.time(),
                     ),
                 )
+            finally:
+                conn.close()
         except Exception:
             logger.exception("kalshi_state: failed to record order for %s (non-fatal)", ticker)
